@@ -1,0 +1,102 @@
+namespace :elb do
+
+  # define is
+  # =============================================================================
+  #   elb_sleep_sec   : detach / attachできたかを確認するのにsleepする秒数
+  #   elb_max_count   : 何回確認するか、elb_sleep_sec * elb_max_count = chech_detach_elb & check_attach_elb
+
+  def detach_elb
+    info "elb::detach_elb(" + host.to_s + "): elb detach instance start."
+    fetch(:ec2).tags.each do |t|
+      # EC2タグのNameが対象サーバと一致する場合
+      if t.value === host.to_s
+        instance = t.resource
+        # ELBから切り離す
+        fetch(:lb_instances).deregister(instance)
+        info "elb::detach_elb(" + host.to_s + "): elb detach instance end."
+      end
+    end
+  end
+
+  def attach_elb
+    info "elb::attach_elb(" + host.to_s + "): elb attach instance start."
+    fetch(:ec2).tags.each do |t|
+      # EC2タグのNameが対象サーバと一致する場合
+      if t.value === host.to_s
+        instance = t.resource
+        # ELBへ切り戻す
+        fetch(:lb_instances).register(instance)
+        info "elb::attach_elb(" + host.to_s + "): elb attach instance end."
+      end
+    end
+  end
+
+  def check_detach_elb
+    info "elb::check_detach_elb(" + host.to_s + "): elb detach instance check start."
+    fetch(:ec2).tags.each do |t|
+      # EC2タグのNameが対象サーバと一致する場合
+      if t.value === host.to_s
+        instance = t.resource
+        i = 0
+        state = "InService"
+        # 一定時間以内もしくはまだ切り離されていない場合にループ
+        while i < fetch(:elb_max_count) && state != "OutOfService" do
+          info "elb::check_detach_elb(" + host.to_s + "): loop count(#{i}), max count(" + fetch(:elb_max_count).to_s + ")."
+          fetch(:lb_instances).health(instance).each do |instance_health|
+            if instance_health[:state].to_s != "InService"
+              info "elb::check_detach_elb(" + host.to_s + "): elb detach instance check break, get state is (#{instance_health[:state].to_s}) and variable state is (#{state})."
+              # ELBから切り離されている場合はループを抜ける
+              state = "OutOfService"
+            else
+              info "elb::check_detach_elb(" + host.to_s + "): elb detach instance check continue, get state is (#{instance_health[:state].to_s}) and variable state is (#{state})."
+              # ELBから切り離されていない場合はカウントアップしてループ継続
+              sleep(fetch(:elb_sleep_sec))
+              i += 1
+            end
+          end
+          # 切り離しが成功したかどうかログ出力
+          if state === "OutOfService"
+            info "elb::check_detach_elb(" + host.to_s + "): elb detach instance is succeeded."
+          elsif i >= fetch(:elb_max_count)
+            warn "elb::check_detach_elb(" + host.to_s + "): elb detach instance is failed."
+          end
+        end
+      end
+    end
+  end
+
+  def check_attach_elb
+    info "elb::check_attach_elb(" + host.to_s + "): elb attach instance check start."
+    fetch(:ec2).tags.each do |t|
+      # EC2タグのNameが対象サーバと一致する場合
+      if t.value === host.to_s
+        instance = t.resource
+        i = 0
+        state = "OutOfService"
+        # 一定時間以内もしくはまだ切り戻されていない場合にループ
+        while i < fetch(:elb_max_count) && state != "InService" do
+          info "elb::check_attach_elb(" + host.to_s + "): loop count(#{i}), max count(" + fetch(:elb_max_count).to_s + ")."
+          fetch(:lb_instances).health(instance).each do |instance_health|
+            if instance_health[:state].to_s === "InService"
+              info "elb::check_attach_elb(" + host.to_s + "): elb attach instance check break, get state is (#{instance_health[:state].to_s}) and variable state is (#{state})."
+              # ELBへ切り戻されている場合はループを抜ける
+              state = "InService"
+            else
+              info "elb::check_attach_elb(" + host.to_s + "): elb attach instance check continue, get state is (#{instance_health[:state].to_s}) and variable state is (#{state})."
+              # ELBへ切り戻されていない場合はカウントアップしてループ継続
+              sleep(fetch(:elb_sleep_sec))
+              i += 1
+            end
+          end
+          # 切り戻しが成功したかどうかログ出力
+          if state === "InService"
+            info "elb::check_attach_elb(" + host.to_s + "): elb attach instance is succeeded."
+          elsif i >= fetch(:elb_max_count)
+            warn "elb::check_attach_elb(" + host.to_s + "): elb attach instance is failed."
+          end
+        end
+      end
+    end
+  end
+
+end

@@ -1,0 +1,90 @@
+# AWS settings
+# ==================
+
+AWS.config({
+  :access_key_id     => '<%= node['capistrano']['aws']['accesskey'] %>',
+  :secret_access_key => '<%= node['capistrano']['aws']['secretkey'] %>',
+  :ec2_endpoint      => 'ec2.ap-northeast-1.amazonaws.com',
+  :elb_endpoint      => 'elasticloadbalancing.ap-northeast-1.amazonaws.com'
+})
+
+
+# Set roles with ELB instances
+# ==================
+
+set :elb_name, 'ravi-web-lb01'
+set :elb, AWS::ELB.new
+set :ec2, AWS::EC2.new
+set :lb_instances, fetch(:elb).load_balancers[fetch(:elb_name)].instances
+set :instances_name, fetch(:lb_instances).map { |instance| instance.tags['Name'] }
+
+# Or, set :instances_name fetch(:lb_instances).select { |i| i.exists? && i.status == :running }.map { |i| i.tags['Name'] }
+
+role :web, fetch(:instances_name)
+role :admin, 'ravi-admin01'
+role :batch, 'ravi-batch01'
+role :manage, 'ravi-manage01'
+
+
+# Simple Role Syntax
+# ==================
+# Supports bulk-adding hosts to roles, the primary server in each group
+# is considered to be the first unless any hosts have the primary
+# property set.  Don't declare `role :all`, it's a meta role.
+
+#role :app, %w{deploy@example.com}
+#role :web, %w{deploy@example.com}
+#role :db,  %w{deploy@example.com}
+
+
+# Set S3 bucket and object.
+# ==================
+
+set :s3_bucket, 'ravi-archive'
+set :s3, AWS::S3.new
+
+if ENV['s3_job']
+  set :s3_job, ENV['s3_job']
+else
+  set :s3_job, 'ravi_prod'
+end
+
+set :war_file, 'ROOT.war'
+set :jar_file, 'ROOT-with-dependencies.jar'
+set :s3_path, 'jenkins/' << fetch(:s3_job) << '/'
+
+
+# Extended Server Syntax
+# ======================
+# This can be used to drop a more detailed server definition into the
+# server list. The second argument is a, or duck-types, Hash and is
+# used to set extended properties on the server.
+
+# server 'example.com', user: 'deploy', roles: %w{web app}, my_property: :my_value
+
+
+# Custom SSH Options
+# ==================
+# You may pass any option but keep in mind that net/ssh understands a
+# limited set of options, consult[net/ssh documentation](http://net-ssh.github.io/net-ssh/classes/Net/SSH.html#method-c-start).
+#
+# Global options
+# --------------
+#  set :ssh_options, {
+#    keys: %w(/home/rlisowski/.ssh/id_rsa),
+#    forward_agent: false,
+#    auth_methods: %w(password)
+#  }
+#
+# And/or per server (overrides global)
+# ------------------------------------
+# server 'example.com',
+#   user: 'user_name',
+#   roles: %w{web app},
+#   ssh_options: {
+#     user: 'user_name', # overrides user setting above
+#     keys: %w(/home/user_name/.ssh/id_rsa),
+#     forward_agent: false,
+#     auth_methods: %w(publickey password)
+#     # password: 'please use keys'
+#   }

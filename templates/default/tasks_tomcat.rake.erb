@@ -1,0 +1,43 @@
+namespace :tomcat do
+
+  # define is
+  # =============================================================================
+  #   tomcat_uniq : stop/startやpsの確認で使うtomcatの識別子
+  #   tomcat_sleep_sec   : stopしたかpsで確認するのにsleepする秒数
+  #   tomcat_max_count   : 何回psで確認するか、tomcat_sleep_sec * tomcat_max_count = force_stop_tomcat
+
+  def start_tomcat
+    execute :sudo, "service #{fetch(:tomcat_uniq)} start"
+  end
+
+  def stop_tomcat
+    execute :sudo, "service #{fetch(:tomcat_uniq)} stop"
+    i = 0
+    pid = 0
+    while pid != 'stop succeeded.' && i < fetch(:tomcat_max_count) do
+      pid = capture "pid_tmp=`ps aux | grep #{fetch(:tomcat_uniq)}/conf/logging.properties | grep -v grep | awk '{print $2}'`; echo ${pid_tmp:-stop succeeded.}"    # captureが何も返さないとエラったので必ず最後にecho
+      sleep(fetch(:tomcat_sleep_sec))
+      i += 1
+    end
+    # tomcat_max_count以上ならforce_stop
+    if i >= fetch(:tomcat_max_count)
+      force_stop_tomcat(pid)
+    end
+  end
+
+  def force_stop_tomcat(pid)
+    execute :kill, "-s TERM #{pid}; true"    # kill時にpidがない可能性があるので強制true、pidはstop_tomcatから引き継ぎ
+    warn "force stop(term) tomcat(#{fetch(:tomcat_uniq)}), pid is #{pid}"
+    pid = capture "pid_tmp=`ps aux | grep #{fetch(:tomcat_uniq)}/conf/logging.properties | grep -v grep | awk '{print $2}'`; echo ${pid_tmp:-stop succeeded.}"
+    if pid != 'stop succeeded.'
+      execute :kill, "-s KILL #{pid}; true"    # TERMでダメならKILL
+      warn "force stop(kill) tomcat(#{fetch(:tomcat_uniq)}), pid is #{pid}"
+    end
+  end
+
+  def restart_tomcat
+    stop_tomcat
+    start_tomcat
+  end
+
+end

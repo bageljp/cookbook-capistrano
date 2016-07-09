@@ -1,0 +1,163 @@
+# config valid only for Capistrano 3.1
+lock '3.2.1'
+
+set :application, 'ravijour-web'
+#set :repo_url, 'git@example.com:me/my_repo.git'
+
+# Default branch is :master
+# ask :branch, proc { `git rev-parse --abbrev-ref HEAD`.chomp }.call
+
+# Default deploy_to directory is /var/www/my_app
+set :deploy_to, '/var/ec_app/warfiles'
+
+# Default value for :scm is :git
+set :scm, :none
+
+# Default value for :format is :pretty
+# set :format, :pretty
+
+# Default value for :log_level is :debug
+# set :log_level, :debug
+
+# Default value for :pty is false
+set :pty, true
+
+# Default value for :linked_files is []
+# set :linked_files, %w{config/database.yml}
+
+# Default value for linked_dirs is []
+# set :linked_dirs, %w{bin log tmp/pids tmp/cache tmp/sockets vendor/bundle public/system}
+
+# Default value for default_env is {}
+# set :default_env, { path: "/opt/ruby/bin:$PATH" }
+
+# Default value for keep_releases is 5
+set :keep_releases, 10
+
+# tomcat settings
+set :tomcat_sleep_sec, 5
+set :tomcat_max_count, 12
+set :tomcat_uniq, 'tomcat'
+
+# elb settings
+set :elb_sleep_sec, 6
+set :elb_max_count, 15
+
+namespace :deploy do
+
+  task :check_source do
+    on roles(:all), in: :parallel do |host|
+      # gitでのrepo_urlから取得できるかのチェックに該当するチェック処理
+      if host.properties.roles.include?(:web) || host.properties.roles.include?(:admin)
+        execute "s3cmd ls s3://#{fetch(:s3_bucket)}/#{fetch(:s3_path)} | grep #{fetch(:war_file)} > /dev/null 2>&1"
+      elsif host.properties.roles.include?(:batch)
+        execute "s3cmd ls s3://#{fetch(:s3_bucket)}/#{fetch(:s3_path)} | grep #{fetch(:jar_file)} > /dev/null 2>&1"
+      elsif host.properties.roles.include?(:stg) || host.properties.roles.include?(:dev)
+        execute "s3cmd ls s3://#{fetch(:s3_bucket)}/#{fetch(:s3_path)} | grep #{fetch(:war_file)} > /dev/null 2>&1"
+        execute "s3cmd ls s3://#{fetch(:s3_bucket)}/#{fetch(:s3_path)} | grep #{fetch(:jar_file)} > /dev/null 2>&1"
+      end
+    end
+  end
+  after 'none:check', :check_source
+
+  task :create_release do
+    on roles(:all), in: :parallel do
+      # release_path （releases/日付のパス）にgit cloneする処理に該当する処理
+      if host.properties.roles.include?(:web) || host.properties.roles.include?(:admin)
+        execute "s3cmd get s3://#{fetch(:s3_bucket)}/#{fetch(:s3_path)}#{fetch(:war_file)} #{fetch(:release_path)}"
+      elsif host.properties.roles.include?(:batch)
+        execute "s3cmd get s3://#{fetch(:s3_bucket)}/#{fetch(:s3_path)}#{fetch(:jar_file)} #{fetch(:release_path)}"
+      elsif host.properties.roles.include?(:stg) || host.properties.roles.include?(:dev)
+        execute "s3cmd get s3://#{fetch(:s3_bucket)}/#{fetch(:s3_path)}#{fetch(:war_file)} #{fetch(:release_path)}"
+        execute "s3cmd get s3://#{fetch(:s3_bucket)}/#{fetch(:s3_path)}#{fetch(:jar_file)} #{fetch(:release_path)}"
+      end
+    end
+  end
+  after 'none:create_release', :create_release
+
+  desc 'Restart application'
+  task :restart do
+    # 全サーバを2グループに分けて実行する
+    on roles(:all), in: :groups, max: 2, wait: 5 do |host|
+      info "restart task target hosts is (" + host.to_s + ")."
+      if host.properties.roles.include?(:web) || host.properties.roles.include?(:stg)
+        # webとstgはELBの処理を含む
+        detach_elb
+        check_detach_elb
+        restart_tomcat
+        attach_elb
+        check_attach_elb
+      elsif host.properties.roles.include?(:admin) || host.properties.roles.include?(:dev)
+        restart_tomcat
+      end
+    end
+  end
+  after :publishing, :restart
+
+  desc 'knife solo cook'
+  task :knife_solo_cook do
+    # 全サーバを2グループに分けて実行する
+    on roles(:all), in: :groups, max: 2, wait: 5 do |host|
+      info "knife_solo_cook task target hosts is (" + host.to_s + ")."
+      # prodctionとstagingはELBの処理を含む
+      case fetch(:stage).to_s
+      when "production"
+        if host.roles.include?(:web)
+          detach_elb
+          check_detach_elb
+          exit(false) if ! system("knife solo cook #{host.to_s}")
+          attach_elb
+          check_attach_elb
+        else
+          exit(false) if ! system("knife solo cook #{host.to_s}")
+        end
+      when "staging"
+        if host.roles.include?(:stg)
+          detach_elb
+          check_detach_elb
+          exit(false) if ! system("knife solo cook #{host.to_s}")
+          attach_elb
+          check_attach_elb
+        else
+          exit(false) if ! system("knife solo cook #{host.to_s}")
+        end
+      else
+        exit(false) if ! system("knife solo cook #{host.to_s}")
+      end
+    end
+  end
+
+  desc 'knife solo cook_why_run'
+  task :knife_solo_cook_why_run do
+    # 全サーバを2グループに分けて実行する
+    on roles(:all), in: :groups, max: 2, wait: 5 do |host|
+      info "knife_solo_cook task target hosts is (" + host.to_s + ")."
+      # prodctionとstagingはELBの処理を含む
+      case fetch(:stage).to_s
+      when "production"
+        if host.roles.include?(:web)
+          detach_elb
+          check_detach_elb
+          exit(false) if ! system("knife solo cook #{host.to_s} -W")
+          attach_elb
+          check_attach_elb
+        else
+          exit(false) if ! system("knife solo cook #{host.to_s} -W")
+        end
+      when "staging"
+        if host.roles.include?(:stg)
+          detach_elb
+          check_detach_elb
+          exit(false) if ! system("knife solo cook #{host.to_s} -W")
+          attach_elb
+          check_attach_elb
+        else
+          exit(false) if ! system("knife solo cook #{host.to_s} -W")
+        end
+      else
+        exit(false) if ! system("knife solo cook #{host.to_s} -W")
+      end
+    end
+  end
+
+end
